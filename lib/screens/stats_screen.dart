@@ -27,6 +27,10 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
   int _offset = 0;
   int? _peakRoom;
 
+  /// The last statistics loaded, shown dimmed while another period loads,
+  /// so the page does not collapse to a spinner and jump back.
+  UsageStats? _lastUsage;
+
   tz.TZDateTime _anchor(HouseTime time) {
     final now = time.now();
     if (_period == StatsPeriod.week) {
@@ -40,9 +44,10 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
     final s = context.s;
     final time = ref.watch(houseTimeProvider);
     final anchor = _anchor(time);
-    final usage = ref.watch(
-      usageProvider((period: _period, anchor: HouseTime.utc(anchor))),
-    );
+    final query = (period: _period, anchor: HouseTime.utc(anchor));
+    final usage = ref.watch(usageProvider(query));
+    if (usage.value case final value?) _lastUsage = value;
+    final shown = usage.value ?? _lastUsage;
     final peak = ref.watch(peakHoursProvider(_peakRoom));
     final rooms = ref.watch(roomsProvider).value ?? const [];
 
@@ -63,52 +68,71 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
             }),
           ),
           const SizedBox(height: 8),
-          AsyncView(
-            value: usage,
-            data: (u) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => setState(() => _offset--),
-                      icon: const Icon(Icons.chevron_left),
-                    ),
-                    Expanded(
-                      child: Text(
-                        _period == StatsPeriod.week
-                            ? '${time.dayLabel(u.from)} – ${time.dayLabel(u.to.subtract(const Duration(minutes: 1)))}'
-                            : time.monthLabel(u.from),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => setState(() => _offset++),
-                      icon: const Icon(Icons.chevron_right),
-                    ),
-                  ],
-                ),
-                Text(
-                  s.totalHours(_hours(u.totalMinutes)),
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => setState(() => _offset--),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Text(
+                  _period == StatsPeriod.week
+                      ? '${time.dayLabel(anchor)} – ${time.dayLabel(time.addDays(anchor, 6))}'
+                      : time.monthLabel(anchor),
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineSmall,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                SectionHeader(s.byRoom),
-                _Bars(
-                  entries: u.byRoom,
-                  colorOf: (_) => Theme.of(context).colorScheme.primary,
-                ),
-                SectionHeader(s.byMember),
-                _Bars(entries: u.byMember, colorOf: (e) => hexColor(e.color)),
-                SectionHeader(s.byDay),
-                SizedBox(
-                  height: 180,
-                  child: _DayChart(days: u.byDay, time: time, period: _period),
-                ),
-              ],
-            ),
+              ),
+              IconButton(
+                onPressed: () => setState(() => _offset++),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
           ),
+          if (usage.hasError && !usage.hasValue)
+            ErrorView(
+              error: usage.error!,
+              onRetry: () => ref.invalidate(usageProvider(query)),
+            )
+          else if (shown == null)
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            AnimatedOpacity(
+              opacity: usage.hasValue ? 1 : 0.4,
+              duration: const Duration(milliseconds: 150),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    s.totalHours(_hours(shown.totalMinutes)),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  SectionHeader(s.byRoom),
+                  _Bars(
+                    entries: shown.byRoom,
+                    colorOf: (_) => Theme.of(context).colorScheme.primary,
+                  ),
+                  SectionHeader(s.byMember),
+                  _Bars(
+                    entries: shown.byMember,
+                    colorOf: (e) => hexColor(e.color),
+                  ),
+                  SectionHeader(s.byDay),
+                  SizedBox(
+                    height: 180,
+                    child: _DayChart(
+                      days: shown.byDay,
+                      time: time,
+                      period: shown.period,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           SectionHeader(
             '${s.peakHours} · ${s.last30Days}',
             trailing: DropdownButton<int?>(
@@ -122,9 +146,12 @@ class _StatsScreenState extends ConsumerState<StatsScreen> {
               onChanged: (id) => setState(() => _peakRoom = id),
             ),
           ),
-          AsyncView(
-            value: peak,
-            data: (p) => SizedBox(height: 180, child: _PeakChart(peak: p)),
+          SizedBox(
+            height: 180,
+            child: AsyncView(
+              value: peak,
+              data: (p) => _PeakChart(peak: p),
+            ),
           ),
         ],
       ),

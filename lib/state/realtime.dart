@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart';
 import 'package:homeslot_client/homeslot_client.dart';
 
 import '../core/client.dart';
@@ -16,9 +18,23 @@ final realtimeProvider = NotifierProvider<RealtimeNotifier, bool>(
 );
 
 class RealtimeNotifier extends Notifier<bool> {
+  /// Events that arrive together (one action often sends several, e.g.
+  /// "members changed" and "bookings changed") refresh each list once.
+  static const _coalesce = Duration(milliseconds: 200);
+
+  /// A connection that stayed up this long starts the back-off again.
+  static const _stableAfter = Duration(seconds: 30);
+
+  /// Time in the background after which events may have been missed.
+  static const _staleAfter = Duration(seconds: 30);
+
   StreamSubscription<HouseholdEvent>? _subscription;
   Timer? _retryTimer;
+  Timer? _flushTimer;
+  final _pending = <ProviderOrFamily>{};
   int _attempt = 0;
+  DateTime? _connectedAt;
+  DateTime? _hiddenAt;
 
   @override
   bool build() {
@@ -29,8 +45,7 @@ class RealtimeNotifier extends Notifier<bool> {
 
     void onConnectivity(bool connected) {
       if (connected && ref.mounted && ref.read(signedInProvider)) {
-        refreshAll(ref.invalidate);
-        _connect();
+        _reconnectNow();
       }
     }
 
@@ -39,14 +54,45 @@ class RealtimeNotifier extends Notifier<bool> {
       () => client.connectivityMonitor?.removeListener(onConnectivity),
     );
 
+    // Phones drop the sockets of apps in the background, often without the
+    // stream noticing. Coming back after a while reconnects and refreshes at
+    // once instead of showing old data until the back-off timer fires.
+    final lifecycle = AppLifecycleListener(
+      onHide: () => _hiddenAt = DateTime.now(),
+      onShow: _onShow,
+    );
+    ref.onDispose(lifecycle.dispose);
+
     if (signedIn) Future.microtask(_connect);
     return false;
+  }
+
+  void _onShow() {
+    final hiddenAt = _hiddenAt;
+    _hiddenAt = null;
+    if (hiddenAt == null || !ref.mounted || !ref.read(signedInProvider)) {
+      return;
+    }
+    if (!state || DateTime.now().difference(hiddenAt) > _staleAfter) {
+      _reconnectNow();
+    } else {
+      // "In use" and "free" depend on the clock, not only on events.
+      ref.invalidate(roomStatusProvider);
+    }
+  }
+
+  void _reconnectNow() {
+    _attempt = 0;
+    // Events may have been missed while disconnected.
+    refreshAll(ref.invalidate);
+    _connect();
   }
 
   void _connect() {
     if (!ref.mounted) return;
     _retryTimer?.cancel();
     _subscription?.cancel();
+    _connectedAt = DateTime.now();
     _subscription = client.events.subscribe().listen(
       _onEvent,
       onError: (Object _) => _scheduleRetry(),
@@ -60,6 +106,13 @@ class RealtimeNotifier extends Notifier<bool> {
     if (!ref.mounted) return;
     state = false;
     _retryTimer?.cancel();
+    final connectedAt = _connectedAt;
+    if (connectedAt != null &&
+        DateTime.now().difference(connectedAt) > _stableAfter) {
+      // The connection worked; a network blip should be recovered quickly,
+      // not after the longest back-off.
+      _attempt = 0;
+    }
     final seconds = min(30, 1 << min(_attempt, 5));
     _attempt++;
     _retryTimer = Timer(Duration(seconds: seconds), () {
@@ -72,32 +125,49 @@ class RealtimeNotifier extends Notifier<bool> {
 
   void _onEvent(HouseholdEvent event) {
     _attempt = 0;
-    switch (event.type) {
-      case HouseholdEventType.bookingsChanged:
-        ref.invalidate(calendarProvider);
-        ref.invalidate(myBookingsProvider);
-        ref.invalidate(roomStatusProvider);
-        ref.invalidate(pendingApprovalsProvider);
-      case HouseholdEventType.roomsChanged:
-        ref.invalidate(roomsProvider);
-        ref.invalidate(roomStatusProvider);
-        ref.invalidate(calendarProvider);
-      case HouseholdEventType.membersChanged:
-        ref.invalidate(membersProvider);
-        ref.invalidate(meProvider);
-        ref.invalidate(calendarProvider);
-        ref.invalidate(roomStatusProvider);
-      case HouseholdEventType.householdChanged:
-        ref.invalidate(meProvider);
-      case HouseholdEventType.notification:
-        ref.invalidate(notificationsProvider);
-        ref.invalidate(pendingApprovalsProvider);
-        ref.invalidate(meProvider);
+    _pending.addAll(switch (event.type) {
+      HouseholdEventType.bookingsChanged => [
+        calendarProvider,
+        myBookingsProvider,
+        roomStatusProvider,
+        pendingApprovalsProvider,
+      ],
+      HouseholdEventType.roomsChanged => [
+        roomsProvider,
+        roomStatusProvider,
+        calendarProvider,
+      ],
+      HouseholdEventType.membersChanged => [
+        membersProvider,
+        meProvider,
+        calendarProvider,
+        roomStatusProvider,
+      ],
+      HouseholdEventType.householdChanged => [meProvider],
+      HouseholdEventType.notification => [
+        notificationsProvider,
+        pendingApprovalsProvider,
+        meProvider,
+      ],
+    });
+    _flushTimer ??= Timer(_coalesce, _flush);
+  }
+
+  void _flush() {
+    _flushTimer = null;
+    if (!ref.mounted) return;
+    final providers = _pending.toList();
+    _pending.clear();
+    for (final provider in providers) {
+      ref.invalidate(provider);
     }
   }
 
   void _stop() {
     _retryTimer?.cancel();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _pending.clear();
     _subscription?.cancel();
     _subscription = null;
   }

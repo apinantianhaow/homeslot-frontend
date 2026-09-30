@@ -8,6 +8,10 @@ import '../core/l10n.dart';
 import '../data/cached.dart';
 
 /// Shows loading, error (with retry) or data for an [AsyncValue].
+///
+/// Data that is already on screen stays there while it reloads, and when a
+/// background refresh fails, instead of being replaced by a spinner or an
+/// error page.
 class AsyncView<T> extends StatelessWidget {
   const AsyncView({
     super.key,
@@ -22,6 +26,8 @@ class AsyncView<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => value.when(
+    skipLoadingOnReload: true,
+    skipError: true,
     data: data,
     loading: () => const Center(child: CircularProgressIndicator()),
     error: (error, _) => ErrorView(error: error, onRetry: onRetry),
@@ -164,7 +170,12 @@ class MemberAvatar extends StatelessWidget {
     return CircleAvatar(
       radius: radius,
       backgroundColor: background,
-      foregroundImage: imageUrl == null ? null : NetworkImage(imageUrl!),
+      foregroundImage: imageUrl == null
+          ? null
+          : ResizeImage(
+              NetworkImage(imageUrl!),
+              width: _decodeWidth(context, radius * 2),
+            ),
       child: Text(
         name.isEmpty ? '?' : name.characters.first.toUpperCase(),
         style: TextStyle(color: onColor(background), fontSize: radius * 0.9),
@@ -172,6 +183,12 @@ class MemberAvatar extends StatelessWidget {
     );
   }
 }
+
+/// Pixel width to decode a photo shown [size] wide. Uploads are up to
+/// 1280 px; decoding them at full size for a small avatar costs memory and
+/// frame time. Twice the size keeps landscape photos sharp when cropped.
+int _decodeWidth(BuildContext context, double size) =>
+    (size * 2 * MediaQuery.devicePixelRatioOf(context)).round();
 
 IconData roomIcon(RoomType type) => switch (type) {
   RoomType.office => Icons.desk_outlined,
@@ -201,6 +218,7 @@ class RoomAvatar extends StatelessWidget {
             : Image.network(
                 room.imageUrl!,
                 fit: BoxFit.cover,
+                cacheWidth: _decodeWidth(context, size),
                 errorBuilder: (_, _, _) => Icon(
                   roomIcon(room.type),
                   color: scheme.onSecondaryContainer,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -11,11 +13,18 @@ import 'state/settings.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Independent start-up work runs at the same time, so the first frame
+  // waits for the slowest step instead of the sum of all of them.
+  final ready = (
+    initializeDateFormatting(),
+    initializeClient(),
+    PushService.init(),
+    SharedPreferences.getInstance(),
+  ).wait;
+  // Decoding the time zone database is CPU work; do it while the platform
+  // calls above are in flight.
   HouseTime.init();
-  await initializeDateFormatting();
-  await initializeClient();
-  await PushService.init();
-  final prefs = await SharedPreferences.getInstance();
+  final (_, _, _, prefs) = await ready;
 
   runApp(
     ProviderScope(

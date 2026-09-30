@@ -30,7 +30,15 @@ final _rootKey = GlobalKey<NavigatorState>();
 final routerProvider = Provider<GoRouter>((ref) {
   final refresh = ValueNotifier<int>(0);
   ref.listen(signedInProvider, (_, _) => refresh.value++);
-  ref.listen(meProvider, (_, _) => refresh.value++);
+  // Only what the redirect below looks at, so a profile reload (after most
+  // real-time events) does not re-run the routing.
+  ref.listen(
+    meProvider.select(
+      (me) =>
+          (loaded: me.value != null, inHousehold: me.value?.household != null),
+    ),
+    (_, _) => refresh.value++,
+  );
 
   final router = GoRouter(
     navigatorKey: _rootKey,

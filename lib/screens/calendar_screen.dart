@@ -157,31 +157,53 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen> {
                     ),
                     const SizedBox(height: 4),
                     Expanded(
-                      child: AsyncView(
-                        value: bookings,
-                        onRetry: () => ref.invalidate(calendarProvider(query)),
-                        data: (list) => Timeline(
-                          key: ValueKey('${detail.room.id}-$_week'),
-                          days: days,
-                          bookings: list,
-                          hours: detail.hours,
-                          closures: detail.closures,
-                          slotMinutes: detail.room.slotMinutes,
-                          time: time,
-                          onTapBooking: (v) =>
-                              BookingActions.showDetails(context, ref, v),
-                          onTapSlot: (start) {
-                            if (!ensureOnline(context, ref)) return;
-                            context.push(
-                              '/book',
-                              extra: BookingFormArgs(
-                                roomId: detail.room.id,
-                                start: start,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+                      // Another week keeps the timeline on screen (and its
+                      // scroll position) while its bookings load, instead
+                      // of swapping it for a spinner.
+                      child: bookings.hasError && !bookings.hasValue
+                          ? ErrorView(
+                              error: bookings.error!,
+                              onRetry: () =>
+                                  ref.invalidate(calendarProvider(query)),
+                            )
+                          : Stack(
+                              children: [
+                                Timeline(
+                                  key: ValueKey('${detail.room.id}-$_week'),
+                                  days: days,
+                                  bookings: bookings.value ?? const [],
+                                  hours: detail.hours,
+                                  closures: detail.closures,
+                                  slotMinutes: detail.room.slotMinutes,
+                                  time: time,
+                                  onTapBooking: (v) =>
+                                      BookingActions.showDetails(
+                                        context,
+                                        ref,
+                                        v,
+                                      ),
+                                  onTapSlot: (start) {
+                                    if (!ensureOnline(context, ref)) return;
+                                    context.push(
+                                      '/book',
+                                      extra: BookingFormArgs(
+                                        roomId: detail.room.id,
+                                        start: start,
+                                      ),
+                                    );
+                                  },
+                                ),
+                                if (!bookings.hasValue)
+                                  const Positioned(
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    child: LinearProgressIndicator(
+                                      minHeight: 2,
+                                    ),
+                                  ),
+                              ],
+                            ),
                     ),
                   ],
                 );

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:homeslot_client/homeslot_client.dart';
@@ -16,8 +18,37 @@ final roomsProvider = FutureProvider<List<RoomDetail>>((ref) async {
 
 final roomStatusProvider = FutureProvider<List<RoomStatus>>((ref) async {
   if (ref.watch(householdIdProvider) == null) return [];
-  return cachedFetch(ref, 'status', () => client.room.statusNow());
+  final list = await cachedFetch(ref, 'status', () => client.room.statusNow());
+  _refreshAtNextChange(ref, list);
+  return list;
 });
+
+/// "In use" and "free" change when a booking starts, which the server does
+/// not announce, so the status refreshes itself at the next start or end.
+void _refreshAtNextChange(Ref ref, List<RoomStatus> list) {
+  if (!ref.mounted) return;
+  final now = DateTime.now();
+  DateTime? next;
+  for (final status in list) {
+    for (final t in [
+      status.current?.booking.endAt,
+      status.next?.booking.startAt,
+      status.closure?.endAt,
+    ]) {
+      if (t != null && t.isAfter(now) && (next == null || t.isBefore(next))) {
+        next = t;
+      }
+    }
+  }
+  if (next == null) return;
+  // A little later than the change itself, in case the server's clock is
+  // slightly behind this device's.
+  final timer = Timer(
+    next.difference(now) + const Duration(seconds: 2),
+    ref.invalidateSelf,
+  );
+  ref.onDispose(timer.cancel);
+}
 
 typedef CalendarQuery = ({int? roomId, DateTime from, DateTime to});
 

@@ -70,32 +70,36 @@ class _TimelineState extends State<Timeline> {
         Expanded(
           child: SingleChildScrollView(
             controller: _scroll,
-            child: SizedBox(
-              height: 24 * _hourHeight + 8,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 44,
-                    child: Stack(
-                      children: [
-                        for (var h = 1; h < 24; h++)
-                          Positioned(
-                            top: h * _hourHeight - 7,
-                            right: 6,
-                            child: Text(
-                              HouseTime.minuteLabel(h * 60),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
+            // Scrolling then moves an already painted layer instead of
+            // repainting every hour line and booking on each frame.
+            child: RepaintBoundary(
+              child: SizedBox(
+                height: 24 * _hourHeight + 8,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 44,
+                      child: Stack(
+                        children: [
+                          for (var h = 1; h < 24; h++)
+                            Positioned(
+                              top: h * _hourHeight - 7,
+                              right: 6,
+                              child: Text(
+                                HouseTime.minuteLabel(h * 60),
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  for (final day in widget.days)
-                    Expanded(child: _dayColumn(context, day)),
-                ],
+                    for (final day in widget.days)
+                      Expanded(child: _dayColumn(context, day)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -162,13 +166,14 @@ class _TimelineState extends State<Timeline> {
                   color: scheme.onSurface.withValues(alpha: 0.06),
                 ),
               ),
-            for (var h = 1; h < 24; h++)
-              Positioned(
-                top: h * _hourHeight,
-                left: 0,
-                right: 0,
-                child: Divider(height: 1, color: scheme.outlineVariant),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _HourLines(
+                  hourHeight: _hourHeight,
+                  color: scheme.outlineVariant,
+                ),
               ),
+            ),
             if (widget.time.sameDay(now, day))
               Positioned(
                 top: y(widget.time.minuteOfDay(now)),
@@ -232,6 +237,26 @@ class _TimelineState extends State<Timeline> {
       ),
     );
   }
+}
+
+/// The 23 hour lines of one day column, painted in one go.
+class _HourLines extends CustomPainter {
+  const _HourLines({required this.hourHeight, required this.color});
+
+  final double hourHeight;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    for (var h = 1; h < 24; h++) {
+      canvas.drawRect(Rect.fromLTWH(0, h * hourHeight, size.width, 1), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HourLines old) =>
+      old.hourHeight != hourHeight || old.color != color;
 }
 
 class _WeekHeader extends StatelessWidget {

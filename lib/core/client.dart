@@ -21,15 +21,29 @@ Future<void> initializeClient() async {
     ..connectivityMonitor = FlutterConnectivityMonitor()
     ..authSessionManager = FlutterAuthSessionManager();
   // Restore the saved session before the first frame so a signed-in user
-  // does not see the sign-in screen flash. Capped so an offline start
-  // does not hang.
+  // does not see the sign-in screen flash. Only local storage is read here;
+  // the session is checked with the server in the background, so a slow or
+  // offline start does not keep the splash screen up.
   try {
-    await client.auth.initialize().timeout(const Duration(seconds: 5));
+    await client.auth.restore().timeout(const Duration(seconds: 5));
   } catch (_) {
-    // Continue signed out; the session manager keeps trying.
+    // Continue signed out.
   }
+  unawaited(_validateSession());
   if (AppConfig.googleEnabled) {
     unawaited(client.auth.initializeGoogleSignIn());
+  }
+}
+
+/// Signs out on this device when the saved session is no longer valid.
+Future<void> _validateSession() async {
+  try {
+    await client.auth.validateAuthentication(
+      timeout: const Duration(seconds: 10),
+    );
+  } catch (_) {
+    // Offline or server error: keep the session; it is checked again on the
+    // next start and whenever a request needs a fresh token.
   }
 }
 

@@ -24,6 +24,13 @@ class HouseTime {
   final tz.Location location;
   final String locale;
 
+  // Building a DateFormat parses its pattern and looks up the locale, so
+  // each one is created once per HouseTime instead of on every call.
+  late final _hm = DateFormat.Hm(locale);
+  late final _day = DateFormat('EEE d MMM', locale);
+  late final _fullDay = DateFormat('EEEE d MMMM y', locale);
+  late final _month = DateFormat('MMMM y', locale);
+
   tz.TZDateTime now() => tz.TZDateTime.now(location);
 
   tz.TZDateTime local(DateTime instant) =>
@@ -70,7 +77,7 @@ class HouseTime {
     isUtc: true,
   );
 
-  String hm(DateTime instant) => DateFormat.Hm(locale).format(local(instant));
+  String hm(DateTime instant) => _hm.format(local(instant));
 
   String endHm(DateTime end, DateTime start) {
     final e = local(end);
@@ -78,14 +85,11 @@ class HouseTime {
     return hm(end);
   }
 
-  String dayLabel(DateTime instant) =>
-      DateFormat('EEE d MMM', locale).format(local(instant));
+  String dayLabel(DateTime instant) => _day.format(local(instant));
 
-  String fullDay(DateTime instant) =>
-      DateFormat('EEEE d MMMM y', locale).format(local(instant));
+  String fullDay(DateTime instant) => _fullDay.format(local(instant));
 
-  String monthLabel(DateTime instant) =>
-      DateFormat('MMMM y', locale).format(local(instant));
+  String monthLabel(DateTime instant) => _month.format(local(instant));
 
   String range(DateTime start, DateTime end) {
     final sameDayOrMidnight =

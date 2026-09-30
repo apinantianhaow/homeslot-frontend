@@ -231,9 +231,16 @@ class _BookingFormScreenState extends ConsumerState<BookingFormScreen> {
       note: note,
       skipStarts: [],
     );
-    final preview = await client.booking.previewSeries(request);
-    final conflicts = preview.where((o) => !o.ok).toList();
-    if (conflicts.isEmpty) return client.booking.createSeries(request);
+    // Book straight away: the server checks every week first, books nothing
+    // when some clash and says which ones, so no preview call is needed.
+    final List<SeriesOccurrence> conflicts;
+    try {
+      return await client.booking.createSeries(request);
+    } on BookingException catch (e) {
+      if (e.code != BookingErrorCode.seriesConflict) rethrow;
+      conflicts = [...?e.conflicts].where((o) => !o.ok).toList();
+      if (conflicts.isEmpty) rethrow;
+    }
     if (!mounted) return null;
     final skip = await _askSkip(conflicts);
     if (skip != true) return null;

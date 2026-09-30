@@ -56,10 +56,14 @@ final myUserIdProvider = Provider<int?>(
 );
 
 /// Formatting and conversion in the household time zone (SRS 4.3).
+///
+/// Depends only on the zone and the language: every screen that shows a
+/// time watches this, so it must not change on each profile reload.
 final houseTimeProvider = Provider<HouseTime>((ref) {
   final zone =
-      ref.watch(meProvider).value?.household?.timezone ?? 'Asia/Bangkok';
-  final locale = ref.watch(settingsProvider).localeCode;
+      ref.watch(meProvider.select((me) => me.value?.household?.timezone)) ??
+      'Asia/Bangkok';
+  final locale = ref.watch(settingsProvider.select((s) => s.localeCode));
   return HouseTime(zone, locale);
 });
 
