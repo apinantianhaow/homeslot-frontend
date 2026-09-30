@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:homeslot_client/homeslot_client.dart';
@@ -27,7 +28,21 @@ final roomStatusProvider = FutureProvider<List<RoomStatus>>((ref) async {
 /// not announce, so the status refreshes itself at the next start or end.
 void _refreshAtNextChange(Ref ref, List<RoomStatus> list) {
   if (!ref.mounted) return;
-  final now = DateTime.now();
+  final now = clock.now();
+  final next = nextStatusChange(list, now);
+  if (next == null) return;
+  // A little later than the change itself, in case the server's clock is
+  // slightly behind this device's.
+  final timer = Timer(
+    next.difference(now) + const Duration(seconds: 2),
+    ref.invalidateSelf,
+  );
+  ref.onDispose(timer.cancel);
+}
+
+/// The first moment after [now] at which a room's status changes: a booking
+/// in use ends, the next booking starts or a closure ends.
+DateTime? nextStatusChange(Iterable<RoomStatus> list, DateTime now) {
   DateTime? next;
   for (final status in list) {
     for (final t in [
@@ -40,14 +55,7 @@ void _refreshAtNextChange(Ref ref, List<RoomStatus> list) {
       }
     }
   }
-  if (next == null) return;
-  // A little later than the change itself, in case the server's clock is
-  // slightly behind this device's.
-  final timer = Timer(
-    next.difference(now) + const Duration(seconds: 2),
-    ref.invalidateSelf,
-  );
-  ref.onDispose(timer.cancel);
+  return next;
 }
 
 typedef CalendarQuery = ({int? roomId, DateTime from, DateTime to});

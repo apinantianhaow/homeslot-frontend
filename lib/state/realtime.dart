@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart';
@@ -9,6 +10,17 @@ import 'package:homeslot_client/homeslot_client.dart';
 import '../core/client.dart';
 import 'data.dart';
 import 'session.dart';
+
+/// Opens the server's stream of household events (replaced in tests).
+final householdEventsProvider = Provider<Stream<HouseholdEvent> Function()>(
+  (ref) => client.events.subscribe,
+);
+
+/// Reports when the network comes back, if the platform can tell (replaced
+/// in tests).
+final connectivityMonitorProvider = Provider<ConnectivityMonitor?>(
+  (ref) => client.connectivityMonitor,
+);
 
 /// Keeps a WebSocket stream open to the server and refreshes the affected
 /// data when someone books, edits or cancels (SRS 2.3.8), so no manual
@@ -49,16 +61,15 @@ class RealtimeNotifier extends Notifier<bool> {
       }
     }
 
-    client.connectivityMonitor?.addListener(onConnectivity);
-    ref.onDispose(
-      () => client.connectivityMonitor?.removeListener(onConnectivity),
-    );
+    final connectivity = ref.watch(connectivityMonitorProvider);
+    connectivity?.addListener(onConnectivity);
+    ref.onDispose(() => connectivity?.removeListener(onConnectivity));
 
     // Phones drop the sockets of apps in the background, often without the
     // stream noticing. Coming back after a while reconnects and refreshes at
     // once instead of showing old data until the back-off timer fires.
     final lifecycle = AppLifecycleListener(
-      onHide: () => _hiddenAt = DateTime.now(),
+      onHide: () => _hiddenAt = clock.now(),
       onShow: _onShow,
     );
     ref.onDispose(lifecycle.dispose);
@@ -73,7 +84,7 @@ class RealtimeNotifier extends Notifier<bool> {
     if (hiddenAt == null || !ref.mounted || !ref.read(signedInProvider)) {
       return;
     }
-    if (!state || DateTime.now().difference(hiddenAt) > _staleAfter) {
+    if (!state || clock.now().difference(hiddenAt) > _staleAfter) {
       _reconnectNow();
     } else {
       // "In use" and "free" depend on the clock, not only on events.
@@ -92,13 +103,15 @@ class RealtimeNotifier extends Notifier<bool> {
     if (!ref.mounted) return;
     _retryTimer?.cancel();
     _subscription?.cancel();
-    _connectedAt = DateTime.now();
-    _subscription = client.events.subscribe().listen(
-      _onEvent,
-      onError: (Object _) => _scheduleRetry(),
-      onDone: _scheduleRetry,
-      cancelOnError: true,
-    );
+    _connectedAt = clock.now();
+    _subscription = ref
+        .read(householdEventsProvider)()
+        .listen(
+          _onEvent,
+          onError: (Object _) => _scheduleRetry(),
+          onDone: _scheduleRetry,
+          cancelOnError: true,
+        );
     state = true;
   }
 
@@ -108,7 +121,7 @@ class RealtimeNotifier extends Notifier<bool> {
     _retryTimer?.cancel();
     final connectedAt = _connectedAt;
     if (connectedAt != null &&
-        DateTime.now().difference(connectedAt) > _stableAfter) {
+        clock.now().difference(connectedAt) > _stableAfter) {
       // The connection worked; a network blip should be recovered quickly,
       // not after the longest back-off.
       _attempt = 0;
